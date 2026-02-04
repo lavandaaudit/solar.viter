@@ -1,0 +1,890 @@
+<!DOCTYPE html>
+<html lang="uk">
+
+<head>
+    <meta charset="UTF-8">
+    <title>IBONARIUM · SOLAR WIND MONITOR · 2026</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <style>
+        /* ------------------------------------------------------------------
+           CORE INTERFACE - DEEP SPACE/WIND AESTHETIC
+           ------------------------------------------------------------------ */
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        ::-webkit-scrollbar {
+            width: 0px;
+        }
+
+        body {
+            background: #020508;
+            color: #0ff;
+            font-family: 'Courier New', monospace;
+            overflow-x: hidden;
+            min-height: 100vh;
+            -webkit-font-smoothing: antialiased;
+        }
+
+        canvas#bg-layer {
+            position: fixed;
+            inset: 0;
+            z-index: 1;
+            pointer-events: none;
+        }
+
+        .app-container {
+            position: relative;
+            z-index: 10;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            width: 100%;
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .brand-header {
+            font-size: 10px;
+            color: #0af;
+            text-transform: lowercase;
+            letter-spacing: 6px;
+            margin-bottom: 25px;
+            opacity: 0.8;
+            position: relative;
+            z-index: 50;
+            text-shadow: 0 0 15px rgba(0, 150, 255, 0.5);
+            text-align: center;
+            width: 100%;
+        }
+
+        /* ------------------------------------------------------------------
+           MASTER HUB LAYOUT (SWAPPED)
+           ------------------------------------------------------------------ */
+        .master-hub {
+            display: flex;
+            flex-direction: row;
+            justify-content: center;
+            gap: 40px;
+            width: 100%;
+            max-width: 1200px;
+            flex-wrap: wrap;
+            align-items: flex-start;
+        }
+
+        /* LEFT SIDE - ANALYTICS & WIND DATA (FORMERLY RIGHT) */
+        .left-hub {
+            width: 500px;
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+            align-items: center;
+            position: relative;
+            z-index: 50;
+        }
+
+        .radar-header {
+            width: 100%;
+            display: flex;
+            justify-content: space-between;
+            border-bottom: 1px solid rgba(0, 200, 255, 0.2);
+            padding-bottom: 5px;
+            margin-bottom: 5px;
+        }
+
+        .rh-title {
+            font-size: 11px;
+            color: #0af;
+            font-weight: bold;
+        }
+
+        .rh-sub {
+            font-size: 9px;
+            color: #588;
+        }
+
+        .radar-box {
+            position: relative;
+            width: 100%;
+            height: 500px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background: radial-gradient(circle at center, rgba(0, 20, 40, 0.3) 0%, rgba(0, 0, 0, 0) 70%);
+        }
+
+        canvas#radar-canvas {
+            width: 500px;
+            height: 500px;
+            filter: drop-shadow(0 0 30px rgba(0, 150, 255, 0.1));
+        }
+
+        .radar-info-panel {
+            width: 100%;
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 15px;
+            background: rgba(2, 10, 20, 0.8);
+            border: 1px solid rgba(0, 200, 255, 0.2);
+            padding: 15px;
+            margin-top: -10px;
+            backdrop-filter: blur(5px);
+        }
+
+        .info-block-title {
+            color: #4df;
+            font-size: 10px;
+            text-transform: uppercase;
+            margin-bottom: 8px;
+            border-left: 3px solid #0af;
+            padding-left: 8px;
+            font-weight: bold;
+        }
+
+        .wind-legend-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 4px;
+            margin-top: 5px;
+        }
+
+        .leg-col {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 3px;
+        }
+
+        .r-tag {
+            font-weight: bold;
+            font-size: 9px;
+            padding: 2px 0;
+            width: 100%;
+            text-align: center;
+            color: #000;
+            border-radius: 2px;
+        }
+
+        .leg-lbl {
+            font-size: 7px;
+            color: #588;
+            text-transform: uppercase;
+        }
+
+        .current-status-desc {
+            font-size: 11px;
+            color: #bef;
+            line-height: 1.5;
+            margin-bottom: 8px;
+            min-height: 32px;
+        }
+
+        .impact-list {
+            list-style: none;
+            padding: 0;
+        }
+
+        .impact-list li {
+            color: #0af;
+            font-size: 10px;
+            margin-bottom: 3px;
+            padding-left: 10px;
+            position: relative;
+        }
+
+        .impact-list li::before {
+            content: "»";
+            position: absolute;
+            left: 0;
+            color: #0ff;
+        }
+
+        /* RIGHT SIDE - VISUALS & METRICS (FORMERLY LEFT) */
+        .right-hub {
+            width: 380px;
+            display: flex;
+            flex-direction: column;
+            gap: 14px;
+            align-items: flex-start;
+            position: relative;
+            z-index: 50;
+        }
+
+        #cosmic-status-line {
+            font-size: 9px;
+            color: #0af;
+            opacity: 0.8;
+            letter-spacing: 1px;
+            border-bottom: 1px solid rgba(0, 200, 255, 0.2);
+            padding-bottom: 4px;
+            width: 100%;
+        }
+
+        #solar-hud {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 8px 12px;
+            width: 100%;
+        }
+
+        .hud-item {
+            font-size: 10px;
+            text-transform: uppercase;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: rgba(0, 100, 255, 0.05);
+            padding: 6px 10px;
+            border-left: 2px solid #035;
+            transition: all 0.3s ease;
+        }
+
+        .hud-item:hover {
+            background: rgba(0, 100, 255, 0.15);
+            border-left-color: #0af;
+        }
+
+        .hud-label {
+            color: #588;
+            font-size: 9px;
+        }
+
+        .hud-val {
+            color: #dff;
+            font-weight: bold;
+        }
+
+        /* Wind Speed Colors */
+        .wind-low {
+            color: #0f8;
+            text-shadow: 0 0 5px #0f8;
+        }
+
+        .wind-med {
+            color: #ff0;
+            text-shadow: 0 0 5px #ff0;
+        }
+
+        .wind-high {
+            color: #f80;
+            text-shadow: 0 0 8px #f80;
+        }
+
+        .wind-ext {
+            color: #f04;
+            text-shadow: 0 0 10px #f04;
+            animation: pulse-fast 0.5s infinite;
+        }
+
+        .earth-wind-box {
+            position: relative;
+            width: 260px;
+            height: 260px;
+            background: transparent;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            margin: 15px 0;
+            align-self: center;
+            border: 1px solid rgba(0, 100, 255, 0.1);
+            border-radius: 50%;
+            overflow: hidden;
+        }
+
+        /* Magnetosphere Simulation */
+        canvas#magneto-canvas {
+            width: 100%;
+            height: 100%;
+            background: #000;
+            border-radius: 50%;
+        }
+
+        #stats-panel {
+            font-size: 10px;
+            color: #78a;
+            line-height: 1.3;
+            width: 100%;
+            border-top: 1px solid rgba(0, 150, 255, 0.2);
+            padding-top: 10px;
+            margin-top: 5px;
+            max-height: 220px;
+            overflow-y: auto;
+        }
+
+        .cat-title {
+            margin: 12px 0 6px 0;
+            font-size: 9px;
+            color: #0af;
+            font-weight: bold;
+            text-transform: uppercase;
+            border-bottom: 1px dashed #035;
+            display: flex;
+            justify-content: space-between;
+            padding-bottom: 2px;
+        }
+
+        .stat-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 3px 0;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+        }
+
+        /* ALERTS */
+        #alert-hub {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            z-index: 1000;
+            pointer-events: none;
+        }
+
+        #clock-overlay {
+            position: fixed;
+            bottom: 15px;
+            right: 20px;
+            font-size: 10px;
+            color: #0af;
+            opacity: 0.6;
+            text-align: right;
+            pointer-events: none;
+            font-weight: bold;
+        }
+
+        @keyframes pulse-fast {
+
+            0%,
+            100% {
+                transform: scale(1);
+                opacity: 1;
+            }
+
+            50% {
+                transform: scale(1.05);
+                opacity: 0.8;
+            }
+        }
+
+        /* RESPONSIVE */
+        @media (max-width: 950px) {
+            .master-hub {
+                flex-direction: column-reverse;
+                align-items: center;
+                gap: 30px;
+            }
+
+            .left-hub,
+            .right-hub {
+                width: 100%;
+                max-width: 100%;
+            }
+
+            .radar-box {
+                height: auto;
+                aspect-ratio: 1/1;
+            }
+
+            canvas#radar-canvas {
+                width: 100%;
+                height: 100%;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <canvas id="bg-layer"></canvas>
+    <div id="alert-hub"></div>
+
+    <div class="app-container">
+        <div class="brand-header">ibonarium.solar.wind.monitor.v1</div>
+
+        <div class="master-hub">
+
+            <!-- LEFT COLUMN: RADAR ANALYTICS (FORMERLY RIGHT) -->
+            <div class="left-hub">
+                <div class="radar-header">
+                    <span class="rh-title">RADAR: SOLAR WIND (SPEED/DENSITY)</span>
+                    <span class="rh-sub">L1 LAGRANGE POINT · ACE/DSCOVR</span>
+                </div>
+
+                <div class="radar-box">
+                    <canvas id="radar-canvas"></canvas>
+                </div>
+
+                <div class="radar-info-panel">
+                    <div>
+                        <div class="info-block-title">СТАН СОНЯЧНОГО ВІТРУ</div>
+                        <div class="current-status-desc" id="status-desc-text">
+                            ЗАВАНТАЖЕННЯ ДАНИХ...
+                        </div>
+                        <ul class="impact-list" id="impact-list">
+                            <li>Швидкість потоку: ---</li>
+                            <li>Геомагнітний вплив: ---</li>
+                        </ul>
+                    </div>
+
+                    <div>
+                        <div class="info-block-title">ШКАЛА АКТИВНОСТІ (км/с)</div>
+                        <div class="wind-legend-grid">
+                            <div class="leg-col">
+                                <span class="r-tag" style="background:#0f8"> &lt;400 </span>
+                                <span class="leg-lbl">NORMAL</span>
+                            </div>
+                            <div class="leg-col">
+                                <span class="r-tag" style="background:#ff0"> 400+ </span>
+                                <span class="leg-lbl">ELEV</span>
+                            </div>
+                            <div class="leg-col">
+                                <span class="r-tag" style="background:#f80"> 600+ </span>
+                                <span class="leg-lbl">HIGH</span>
+                            </div>
+                            <div class="leg-col">
+                                <span class="r-tag" style="background:#f04"> 800+ </span>
+                                <span class="leg-lbl">STORM</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- RIGHT COLUMN: METRICS & VISUAL (FORMERLY LEFT) -->
+            <div class="right-hub">
+                <div id="cosmic-status-line">REAL-TIME PLASMA TELEMETRY</div>
+
+                <div id="solar-hud">
+                    <div class="hud-item"><span class="hud-label">SPEED (KM/S)</span> <span class="hud-val"
+                            id="val-speed">---</span></div>
+                    <div class="hud-item"><span class="hud-label">DENSITY (p/cm³)</span> <span class="hud-val"
+                            id="val-density">---</span></div>
+                    <div class="hud-item"><span class="hud-label">BZ (nT)</span> <span class="hud-val"
+                            id="val-bz">---</span></div>
+                    <div class="hud-item"><span class="hud-label">BT (nT)</span> <span class="hud-val"
+                            id="val-bt">---</span></div>
+                    <div class="hud-item"><span class="hud-label">TEMP (K)</span> <span class="hud-val"
+                            id="val-temp">---</span></div>
+                    <div class="hud-item"><span class="hud-label">KP INDEX</span> <span class="hud-val"
+                            id="val-kp">---</span></div>
+                </div>
+
+                <div class="earth-wind-box">
+                    <canvas id="magneto-canvas"></canvas>
+                </div>
+
+                <div style="font-size:9px; color:#588; text-align:center;">SIMULATION: MAGNETOSPHERE RESPONSE</div>
+
+                <div id="stats-panel">
+                    <div style="text-align:center; padding:10px; color:#555;">ОТРИМАННЯ ІСТОРІЇ (7 ДНІВ)...</div>
+                </div>
+            </div>
+
+        </div>
+    </div>
+
+    <div id="clock-overlay">INIT</div>
+
+    <script>
+        const PROXY = 'https://corsproxy.io/?';
+        const NOAA_PLASMA_7D = 'https://services.swpc.noaa.gov/products/solar-wind/plasma-7-day.json';
+        const NOAA_MAG_7D = 'https://services.swpc.noaa.gov/products/solar-wind/mag-7-day.json';
+
+        // STATE
+        const STATE = {
+            speed: 0,
+            density: 0,
+            temp: 0,
+            bz: 0,
+            bt: 0,
+            history: [], // {time, speed, density}
+            status: 'NORMAL'
+        };
+
+        // Canvas
+        const bgC = document.getElementById('bg-layer'); const bgCtx = bgC.getContext('2d');
+        const rdC = document.getElementById('radar-canvas'); const rdCtx = rdC.getContext('2d');
+        const mgC = document.getElementById('magneto-canvas'); const mgCtx = mgC.getContext('2d');
+
+        function resize() {
+            const r = window.devicePixelRatio || 1;
+            bgC.width = window.innerWidth * r; bgC.height = window.innerHeight * r;
+
+            // Layout Logic
+            const box = document.querySelector('.radar-box');
+            if (box) {
+                rdC.width = box.clientWidth * r; rdC.height = box.clientHeight * r;
+            }
+            const mBox = document.querySelector('.earth-wind-box');
+            if (mBox) {
+                mgC.width = mBox.clientWidth * r; mgC.height = mBox.clientHeight * r;
+            }
+
+            bgCtx.scale(r, r); rdCtx.scale(r, r); mgCtx.scale(r, r);
+        }
+        window.addEventListener('resize', resize);
+
+        // DATA FETCH
+        async function fetchData() {
+            try {
+                // Fetch Plasma
+                const rp = await fetch(NOAA_PLASMA_7D);
+                const plasmaRaw = await rp.json(); // [time, den, speed, temp]
+
+                // Fetch Mag
+                const rm = await fetch(NOAA_MAG_7D);
+                const magRaw = await rm.json(); // [time, bx, by, bz, bt, lat, long]
+
+                // Parse Plasma (Skip header row 0)
+                // Need to align plasma and mag? Just use latest for HUD
+                const latestP = plasmaRaw[plasmaRaw.length - 1];
+                const latestM = magRaw[magRaw.length - 1];
+
+                STATE.density = parseFloat(latestP[1]);
+                STATE.speed = parseFloat(latestP[2]);
+                STATE.temp = parseFloat(latestP[3]);
+
+                STATE.bz = parseFloat(latestM[3]);
+                STATE.bt = parseFloat(latestM[4]);
+
+                // Build History Object (Merged or just Plasma for Radar)
+                // Plasma history is enough for the "Wind Radar"
+                const history = [];
+                // data format: [0]time, [1]den, [2]spd, [3]temp
+                for (let i = 1; i < plasmaRaw.length; i++) {
+                    const row = plasmaRaw[i];
+                    history.push({
+                        time: new Date(row[0]),
+                        speed: parseFloat(row[2]),
+                        density: parseFloat(row[1])
+                    });
+                }
+                STATE.history = history;
+
+                updateHUD();
+                updateInfo();
+                checkAlerts();
+                generateStats();
+
+            } catch (e) {
+                console.error(e);
+                // Mock on fail
+                if (STATE.history.length === 0) {
+                    STATE.speed = 350; STATE.density = 5; STATE.bz = -2;
+                    // fill fake history
+                }
+            }
+        }
+
+        function updateHUD() {
+            const sEl = document.getElementById('val-speed');
+            sEl.innerText = STATE.speed.toFixed(0);
+
+            // Color code speed
+            if (STATE.speed > 700) sEl.className = 'hud-val wind-ext';
+            else if (STATE.speed > 500) sEl.className = 'hud-val wind-high';
+            else if (STATE.speed > 400) sEl.className = 'hud-val wind-med';
+            else sEl.className = 'hud-val wind-low';
+
+            document.getElementById('val-density').innerText = STATE.density.toFixed(1);
+            document.getElementById('val-bz').innerText = STATE.bz.toFixed(1);
+            document.getElementById('val-bt').innerText = STATE.bt.toFixed(1);
+            document.getElementById('val-temp').innerText = (STATE.temp / 1000).toFixed(0) + 'k';
+
+            // Approx Kp based on Speed + Bz (Rough logic)
+            // Kp rises if Speed high AND Bz negative (South)
+            let score = 0;
+            if (STATE.speed > 400) score += 1;
+            if (STATE.speed > 500) score += 2;
+            if (STATE.speed > 700) score += 3;
+            if (STATE.bz < -5) score += 2;
+            if (STATE.bz < -10) score += 3;
+
+            const estKp = Math.min(9, Math.floor(score + STATE.density / 10));
+            document.getElementById('val-kp').innerText = `~${estKp} (EST)`;
+        }
+
+        function updateInfo() {
+            const desc = document.getElementById('status-desc-text');
+            const list = document.getElementById('impact-list');
+
+            let txt = '', impacts = [];
+
+            if (STATE.speed > 700 || STATE.bz < -15) {
+                txt = "КРИТИЧНА БУРЯ (STORM LEVEL). СИЛЬНИЙ ВІТЕР.";
+                impacts = ["Дуже сильні полярні сяйва", "Ризик для супутників", "Струми в енергосистемах"];
+                desc.style.color = '#f04';
+            } else if (STATE.speed > 500 || STATE.bz < -5) {
+                txt = "ПІДВИЩЕНА АКТИВНІСТЬ. КОРОНАЛЬНА ДІРА(?)";
+                impacts = ["Помірні сяйва", "Незначні флуктуації мереж"];
+                desc.style.color = '#f80';
+            } else {
+                txt = "СПОКІЙНИЙ СОНЯЧНИЙ ВІТЕР.";
+                impacts = ["Стабільна магнітосфера", "Умови нормальні"];
+                desc.style.color = '#0f8';
+            }
+
+            desc.innerText = txt;
+            list.innerHTML = impacts.map(i => `<li>${i}</li>`).join('');
+        }
+
+        function generateStats() {
+            // Last 7 days daily max speed
+            const p = document.getElementById('stats-panel');
+            let html = '';
+            const days = {};
+
+            STATE.history.forEach(d => {
+                const day = d.time.toISOString().split('T')[0];
+                if (!days[day] || d.speed > days[day]) days[day] = d.speed;
+            });
+
+            html += '<div class="cat-title"><span>MAX SPEED (7D)</span> <span>KM/S</span></div>';
+            Object.keys(days).sort().reverse().slice(0, 7).forEach(date => {
+                const v = days[date];
+                let c = '#0f8';
+                if (v > 400) c = '#ff0'; if (v > 500) c = '#f80'; if (v > 700) c = '#f04';
+
+                html += `<div class="stat-row">
+                    <span class="stat-date">${date.slice(5)}</span>
+                    <span style="color:${c}; font-weight:bold">${v.toFixed(0)}</span>
+                </div>`;
+            });
+            p.innerHTML = html;
+        }
+
+        let alertState = false;
+        function checkAlerts() {
+            const isStorm = STATE.speed > 600 || STATE.bz < -10;
+            const alertBox = document.getElementById('alert-hub');
+            if (isStorm) {
+                if (!alertState) {
+                    alertBox.innerHTML = `
+                        <div style="background:#f04; color:#fff; padding:10px; border:2px solid #fff; font-weight:bold; box-shadow:0 0 20px #f04;">
+                            ⚠️ ГЕОМАГНІТНИЙ ШТОРМ<br>
+                            SPEED: ${STATE.speed.toFixed(0)} KM/S
+                        </div>
+                    `;
+                    alertState = true;
+                }
+            } else {
+                if (alertState) {
+                    alertBox.innerHTML = '';
+                    alertState = false;
+                }
+            }
+        }
+
+        // ------------------------------------
+        // VISUALIZATION - RADAR (HELIX WIND)
+        // ------------------------------------
+        function drawRadar() {
+            if (!STATE.history.length) return;
+
+            const W = rdC.width / (window.devicePixelRatio || 1);
+            const H = rdC.height / (window.devicePixelRatio || 1);
+            rdCtx.clearRect(0, 0, W, H);
+
+            const cx = W / 2, cy = H / 2 - 30;
+            const rx = Math.min(W, H) * 0.4;
+            const ry = rx * 0.35;
+            const layerH = 30; // Spacing
+
+            const now = new Date();
+            const currHrs = now.getUTCHours() + now.getUTCMinutes() / 60;
+            const rotOffset = Math.PI / 2 - (currHrs / 24) * Math.PI * 2;
+
+            const daysToShow = 7;
+            const oneDay = 24 * 60 * 60 * 1000;
+
+            // Loop Days (Bottom->Top or Top->Bottom?)
+            // We want TODAY to be the TOP layer.
+            // Draw order: Oldest (Bottom) -> Newest (Top)
+
+            for (let d = daysToShow - 1; d >= 0; d--) {
+                const dayStart = new Date(now.getTime() - (d + 1) * oneDay);
+                const dayEnd = new Date(now.getTime() - d * oneDay);
+
+                // Filter data is heavy, but ok
+                const dayData = STATE.history.filter(p => p.time >= dayStart && p.time < dayEnd);
+
+                const layerY = cy + (d * 12); // Shift down
+                const layerScale = 1.0 - (d * 0.04);
+                const layerAlpha = 1.0 - (d * 0.1);
+
+                // Ring
+                rdCtx.beginPath();
+                rdCtx.ellipse(cx, layerY, rx * layerScale, ry * layerScale, 0, 0, Math.PI * 2);
+                rdCtx.strokeStyle = (d === 0) ? 'rgba(0,180,255,0.4)' : 'rgba(0,100,200,0.08)';
+                rdCtx.lineWidth = 1;
+                rdCtx.stroke();
+
+                // Label
+                if (d === 0) {
+                    rdCtx.fillStyle = '#0af'; rdCtx.font = 'bold 9px Space Mono';
+                    rdCtx.fillText("СЬОГОДНІ", cx - rx * layerScale - 40, layerY);
+                }
+
+                // DATA BARS (Wind Speed)
+                // Scale: Normal is 300-400. High is 800.
+                // Height = (Speed - 250) / 10
+                if (dayData.length > 0) {
+                    rdCtx.lineCap = 'butt';
+                    const step = Math.max(1, Math.floor(dayData.length / 100));
+
+                    for (let i = 0; i < dayData.length; i += step) {
+                        const pt = dayData[i];
+                        if (isNaN(pt.speed)) continue;
+
+                        const time = pt.time;
+                        const h = time.getUTCHours() + time.getUTCMinutes() / 60;
+                        const ang = (h / 24) * Math.PI * 2 + rotOffset;
+
+                        // Height Calculation
+                        let baseH = (pt.speed - 250) * 0.12;
+                        if (baseH < 2) baseH = 2;
+
+                        const cos = Math.cos(ang), sin = Math.sin(ang);
+                        const x = cx + cos * rx * layerScale;
+                        const y = cy + sin * ry * layerScale;
+
+                        // Color
+                        let col = '#0f8'; // <400
+                        if (pt.speed > 400) col = '#ff0';
+                        if (pt.speed > 550) col = '#f80';
+                        if (pt.speed > 700) col = '#f04';
+
+                        rdCtx.beginPath();
+                        rdCtx.moveTo(x, y);
+                        rdCtx.lineTo(x, y - baseH);
+                        rdCtx.strokeStyle = col;
+                        rdCtx.lineWidth = isNaN(pt.speed) ? 0 : 2;
+                        rdCtx.globalAlpha = (d === 0) ? layerAlpha : layerAlpha * 0.4;
+                        rdCtx.stroke();
+                        rdCtx.globalAlpha = 1;
+                    }
+                }
+            }
+
+            // Front Overlay for Time
+            // Ticks only on top layer
+            for (let i = 0; i < 24; i += 6) {
+                const ang = (i / 24) * Math.PI * 2 + rotOffset;
+                const cos = Math.cos(ang), sin = Math.sin(ang);
+                const rxT = rx * 1.1, ryT = ry * 1.1;
+
+                rdCtx.fillStyle = '#fff'; rdCtx.font = '10px Space Mono';
+                rdCtx.fillText(`${i.toString().padStart(2, '0')}:00`, cx + cos * rxT - 10, cy + sin * ryT);
+            }
+
+            // Scanner Line
+            const frontY = cy + ry;
+            rdCtx.beginPath();
+            rdCtx.moveTo(cx, cy + ry);
+            rdCtx.lineTo(cx, cy + ry + ((daysToShow - 1) * 12));
+            rdCtx.strokeStyle = '#0ff'; rdCtx.setLineDash([4, 4]); rdCtx.stroke(); rdCtx.setLineDash([]);
+        }
+
+        // ------------------------------------
+        // VISUALIZATION - MAGNETOSPHERE
+        // ------------------------------------
+        function drawMagneto() {
+            // Simulated Earth Magnetic Shield interacting with Solar Wind
+            const w = mgC.width / (window.devicePixelRatio || 1);
+            const h = mgC.height / (window.devicePixelRatio || 1);
+            mgCtx.clearRect(0, 0, w, h);
+
+            const cx = w / 2, cy = h / 2;
+            const t = performance.now() * 0.002;
+
+            // Earth
+            mgCtx.beginPath(); mgCtx.arc(cx, cy, 15, 0, Math.PI * 2);
+            mgCtx.fillStyle = '#05a'; mgCtx.fill();
+            mgCtx.beginPath(); mgCtx.arc(cx, cy, 15, 0.5, Math.PI * 1.5); // shadow side
+            mgCtx.fillStyle = '#000'; mgCtx.fill();
+
+            // Bow Shock (Left side usually, but wind comes from "Sun"?)
+            // Let's assume Sun is Left. Wind flows Left -> Right.
+            // Bow Shock is curved on Left.
+
+            // Wind Particles flow
+            const particles = 40;
+            const speedFact = STATE.speed ? (STATE.speed / 200) : 2; // pixel speed
+
+            for (let i = 0; i < particles; i++) {
+                // Random stream
+                const y = (Math.sin(i * 132 + t) * h * 0.4) + cy;
+                const xBase = (t * speedFact * 20 + i * 30) % w;
+                // Move Left to Right
+                // Interaction: deflect around earth
+                let x = xBase;
+                let yD = y;
+
+                // Simple deflection logic
+                const dx = x - cx;
+                const dy = y - cy;
+                const dist = Math.sqrt(dx * dx + dy * dy);
+
+                if (dist < 40) {
+                    // Deflect y
+                    yD += (dy > 0 ? 1 : -1) * (40 - dist);
+                    // Slow x?
+                }
+
+                mgCtx.fillStyle = '#aaa';
+                if (STATE.speed > 500) mgCtx.fillStyle = '#fb0';
+
+                mgCtx.fillRect(x, yD, 3, 1);
+            }
+
+            // Field Lines
+            mgCtx.strokeStyle = 'rgba(0,100,255,0.3)';
+            mgCtx.lineWidth = 1;
+            // Draw dipole loops
+            for (let s = -1; s <= 1; s += 2) {
+                for (let r = 20; r < 60; r += 10) {
+                    mgCtx.beginPath();
+                    mgCtx.ellipse(cx, cy, r * 0.5, r, 0, Math.PI / 2, Math.PI * 1.5);
+                    // Wait, dipole is usually top-bottom loops if North is Up.
+                    // Magnetic North Up. Loops go out top, circle round, in bottom.
+                    // Side view.
+                    mgCtx.stroke();
+                }
+            }
+        }
+
+        function drawBackground() {
+            bgCtx.fillStyle = '#020508'; bgCtx.fillRect(0, 0, bgC.width, bgC.height);
+            // Blue Stars
+            bgCtx.fillStyle = 'rgba(0, 150, 255, 0.4)';
+            const t = performance.now() * 0.0001;
+            for (let i = 0; i < 60; i++) {
+                const x = (Math.sin(i * 55 + t) * 0.5 + 0.5) * bgC.width;
+                const y = (Math.cos(i * 12 + t) * 0.5 + 0.5) * bgC.height;
+                bgCtx.fillRect(x, y, 1, 1);
+            }
+        }
+
+        function animLoop() {
+            drawBackground();
+            drawRadar();
+            drawMagneto();
+
+            const n = new Date();
+            document.getElementById('clock-overlay').innerText = n.toISOString().split('.')[0] + " Z";
+            requestAnimationFrame(animLoop);
+        }
+
+        // INIT
+        fetchData();
+        resize();
+        setInterval(fetchData, 60000);
+        animLoop();
+
+    </script>
+</body>
+
+</html>
