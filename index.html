@@ -539,7 +539,6 @@
                 const magRaw = await rm.json(); // [time, bx, by, bz, bt, lat, long]
 
                 // Parse Plasma (Skip header row 0)
-                // Need to align plasma and mag? Just use latest for HUD
                 const latestP = plasmaRaw[plasmaRaw.length - 1];
                 const latestM = magRaw[magRaw.length - 1];
 
@@ -550,14 +549,11 @@
                 STATE.bz = parseFloat(latestM[3]);
                 STATE.bt = parseFloat(latestM[4]);
 
-                // Build History Object (Merged or just Plasma for Radar)
-                // Plasma history is enough for the "Wind Radar"
                 const history = [];
-                // data format: [0]time, [1]den, [2]spd, [3]temp
                 for (let i = 1; i < plasmaRaw.length; i++) {
                     const row = plasmaRaw[i];
                     history.push({
-                        time: new Date(row[0]),
+                        time: new Date(row[0] + "Z"),
                         speed: parseFloat(row[2]),
                         density: parseFloat(row[1])
                     });
@@ -571,10 +567,8 @@
 
             } catch (e) {
                 console.error(e);
-                // Mock on fail
                 if (STATE.history.length === 0) {
                     STATE.speed = 350; STATE.density = 5; STATE.bz = -2;
-                    // fill fake history
                 }
             }
         }
@@ -583,7 +577,6 @@
             const sEl = document.getElementById('val-speed');
             sEl.innerText = STATE.speed.toFixed(0);
 
-            // Color code speed
             if (STATE.speed > 700) sEl.className = 'hud-val wind-ext';
             else if (STATE.speed > 500) sEl.className = 'hud-val wind-high';
             else if (STATE.speed > 400) sEl.className = 'hud-val wind-med';
@@ -594,8 +587,6 @@
             document.getElementById('val-bt').innerText = STATE.bt.toFixed(1);
             document.getElementById('val-temp').innerText = (STATE.temp / 1000).toFixed(0) + 'k';
 
-            // Approx Kp based on Speed + Bz (Rough logic)
-            // Kp rises if Speed high AND Bz negative (South)
             let score = 0;
             if (STATE.speed > 400) score += 1;
             if (STATE.speed > 500) score += 2;
@@ -614,16 +605,16 @@
             let txt = '', impacts = [];
 
             if (STATE.speed > 700 || STATE.bz < -15) {
-                txt = "КРИТИЧНА БУРЯ (STORM LEVEL). СИЛЬНИЙ ВІТЕР.";
-                impacts = ["Дуже сильні полярні сяйва", "Ризик для супутників", "Струми в енергосистемах"];
+                txt = "КРИТИЧНА БУРЯ. СИЛЬНИЙ ВІТЕР.";
+                impacts = ["Ризик для супутників", "Струми в мережах"];
                 desc.style.color = '#f04';
             } else if (STATE.speed > 500 || STATE.bz < -5) {
-                txt = "ПІДВИЩЕНА АКТИВНІСТЬ. КОРОНАЛЬНА ДІРА(?)";
-                impacts = ["Помірні сяйва", "Незначні флуктуації мереж"];
+                txt = "ПІДВИЩЕНА АКТИВНІСТЬ.";
+                impacts = ["Помірні сяйва", "Можливі флуктуації"];
                 desc.style.color = '#f80';
             } else {
-                txt = "СПОКІЙНИЙ СОНЯЧНИЙ ВІТЕР.";
-                impacts = ["Стабільна магнітосфера", "Умови нормальні"];
+                txt = "СТАН СТАБІЛЬНИЙ. СПОКІЙ.";
+                impacts = ["Магнітосфера в нормі", "Умови стандартні"];
                 desc.style.color = '#0f8';
             }
 
@@ -632,7 +623,6 @@
         }
 
         function generateStats() {
-            // Last 7 days daily max speed
             const p = document.getElementById('stats-panel');
             let html = '';
             const days = {};
@@ -679,7 +669,7 @@
         }
 
         // ------------------------------------
-        // VISUALIZATION - RADAR (HELIX WIND)
+        // VISUALIZATION - RADAR
         // ------------------------------------
         function drawRadar() {
             if (!STATE.history.length) return;
@@ -691,68 +681,59 @@
             const cx = W / 2, cy = H / 2 - 30;
             const rx = Math.min(W, H) * 0.4;
             const ry = rx * 0.35;
-            const layerH = 30; // Spacing
 
             const now = new Date();
             const currHrs = now.getUTCHours() + now.getUTCMinutes() / 60;
             const rotOffset = Math.PI / 2 - (currHrs / 24) * Math.PI * 2;
 
-            const daysToShow = 7;
-            const oneDay = 24 * 60 * 60 * 1000;
-
-            // Loop Days (Bottom->Top or Top->Bottom?)
-            // We want TODAY to be the TOP layer.
-            // Draw order: Oldest (Bottom) -> Newest (Top)
-
-            for (let d = daysToShow - 1; d >= 0; d--) {
-                const dayStart = new Date(now.getTime() - (d + 1) * oneDay);
-                const dayEnd = new Date(now.getTime() - d * oneDay);
-
-                // Filter data is heavy, but ok
+            for (let d = 6; d >= 0; d--) {
+                const dayStart = new Date(now.getTime() - (d + 1) * 24 * 60 * 60 * 1000);
+                const dayEnd = new Date(now.getTime() - d * 24 * 60 * 60 * 1000);
                 const dayData = STATE.history.filter(p => p.time >= dayStart && p.time < dayEnd);
 
-                const layerY = cy + (d * 12); // Shift down
+                const layerY = cy + (d * 12);
                 const layerScale = 1.0 - (d * 0.04);
                 const layerAlpha = 1.0 - (d * 0.1);
 
-                // Ring
                 rdCtx.beginPath();
                 rdCtx.ellipse(cx, layerY, rx * layerScale, ry * layerScale, 0, 0, Math.PI * 2);
                 rdCtx.strokeStyle = (d === 0) ? 'rgba(0,180,255,0.4)' : 'rgba(0,100,200,0.08)';
                 rdCtx.lineWidth = 1;
                 rdCtx.stroke();
 
-                // Label
+                // TIME SCALE MARKERS (00, 06, 12, 18) - ONLY ON TOP LAYER
                 if (d === 0) {
-                    rdCtx.fillStyle = '#0af'; rdCtx.font = 'bold 9px Space Mono';
-                    rdCtx.fillText("СЬОГОДНІ", cx - rx * layerScale - 40, layerY);
+                    rdCtx.font = 'bold 11px Space Mono';
+                    rdCtx.fillStyle = 'rgba(0, 255, 255, 0.9)';
+                    rdCtx.textAlign = 'center';
+                    [0, 6, 12, 18].forEach(hr => {
+                        const ang = (hr / 24) * Math.PI * 2 + rotOffset;
+                        const tx = cx + Math.cos(ang) * (rx * 1.1);
+                        const ty = layerY + Math.sin(ang) * (ry * 1.1);
+                        rdCtx.fillText(hr.toString().padStart(2, '0') + ":00", tx, ty);
+
+                        // Small tick
+                        rdCtx.beginPath();
+                        rdCtx.moveTo(cx + Math.cos(ang) * rx, layerY + Math.sin(ang) * ry);
+                        rdCtx.lineTo(cx + Math.cos(ang) * (rx * 1.05), layerY + Math.sin(ang) * (ry * 1.05));
+                        rdCtx.strokeStyle = 'rgba(0, 255, 255, 0.3)';
+                        rdCtx.stroke();
+                    });
+                    rdCtx.textAlign = 'start'; // reset
                 }
 
-                // DATA BARS (Wind Speed)
-                // Scale: Normal is 300-400. High is 800.
-                // Height = (Speed - 250) / 10
                 if (dayData.length > 0) {
-                    rdCtx.lineCap = 'butt';
                     const step = Math.max(1, Math.floor(dayData.length / 100));
-
                     for (let i = 0; i < dayData.length; i += step) {
                         const pt = dayData[i];
-                        if (isNaN(pt.speed)) continue;
-
                         const time = pt.time;
                         const h = time.getUTCHours() + time.getUTCMinutes() / 60;
                         const ang = (h / 24) * Math.PI * 2 + rotOffset;
-
-                        // Height Calculation
                         let baseH = (pt.speed - 250) * 0.12;
-                        if (baseH < 2) baseH = 2;
+                        const x = cx + Math.cos(ang) * rx * layerScale;
+                        const y = layerY + Math.sin(ang) * ry * layerScale;
 
-                        const cos = Math.cos(ang), sin = Math.sin(ang);
-                        const x = cx + cos * rx * layerScale;
-                        const y = cy + sin * ry * layerScale;
-
-                        // Color
-                        let col = '#0f8'; // <400
+                        let col = '#0f8';
                         if (pt.speed > 400) col = '#ff0';
                         if (pt.speed > 550) col = '#f80';
                         if (pt.speed > 700) col = '#f04';
@@ -761,7 +742,7 @@
                         rdCtx.moveTo(x, y);
                         rdCtx.lineTo(x, y - baseH);
                         rdCtx.strokeStyle = col;
-                        rdCtx.lineWidth = isNaN(pt.speed) ? 0 : 2;
+                        rdCtx.lineWidth = 2;
                         rdCtx.globalAlpha = (d === 0) ? layerAlpha : layerAlpha * 0.4;
                         rdCtx.stroke();
                         rdCtx.globalAlpha = 1;
@@ -769,116 +750,71 @@
                 }
             }
 
-            // Front Overlay for Time
-            // Ticks only on top layer
-            for (let i = 0; i < 24; i += 6) {
-                const ang = (i / 24) * Math.PI * 2 + rotOffset;
-                const cos = Math.cos(ang), sin = Math.sin(ang);
-                const rxT = rx * 1.1, ryT = ry * 1.1;
+            // NOW MARKER (REPOSITIONED TO BOTTOM - ЗАРАЗ В НИЗ)
+            const bx = cx, by = cy + ry;
+            const pulse = 1 + Math.sin(performance.now() * 0.01) * 0.2;
+            rdCtx.beginPath(); rdCtx.arc(bx, by, 7 * pulse, 0, Math.PI * 2);
+            rdCtx.strokeStyle = '#0ff'; rdCtx.lineWidth = 2; rdCtx.stroke();
+            rdCtx.beginPath(); rdCtx.arc(bx, by, 2, 0, Math.PI * 2);
+            rdCtx.fillStyle = '#fff'; rdCtx.fill();
 
-                rdCtx.fillStyle = '#fff'; rdCtx.font = '10px Space Mono';
-                rdCtx.fillText(`${i.toString().padStart(2, '0')}:00`, cx + cos * rxT - 10, cy + sin * ryT);
-            }
+            // CONCISE REPORT NEAR MARKER
+            let shortStatus = STATE.speed > 600 ? "ШТОРМ" : STATE.speed > 450 ? "АКТИВНО" : "СТАБІЛЬНО";
+            let shortCol = STATE.speed > 600 ? "#f04" : STATE.speed > 450 ? "#f80" : "#0f8";
 
-            // Scanner Line
-            const frontY = cy + ry;
-            rdCtx.beginPath();
-            rdCtx.moveTo(cx, cy + ry);
-            rdCtx.lineTo(cx, cy + ry + ((daysToShow - 1) * 12));
-            rdCtx.strokeStyle = '#0ff'; rdCtx.setLineDash([4, 4]); rdCtx.stroke(); rdCtx.setLineDash([]);
+            rdCtx.fillStyle = shortCol; rdCtx.font = 'bold 10px Space Mono';
+            rdCtx.fillText("ЗАРАЗ", bx - 14, by + 18);
+            rdCtx.fillStyle = '#fff'; rdCtx.font = '9px Courier New';
+            rdCtx.fillText(shortStatus, bx - 18, by + 30);
+            rdCtx.fillStyle = '#0af';
+            rdCtx.fillText(`${STATE.speed.toFixed(0)} км/с`, bx - 21, by + 42);
         }
 
-        // ------------------------------------
-        // VISUALIZATION - MAGNETOSPHERE
-        // ------------------------------------
         function drawMagneto() {
-            // Simulated Earth Magnetic Shield interacting with Solar Wind
             const w = mgC.width / (window.devicePixelRatio || 1);
             const h = mgC.height / (window.devicePixelRatio || 1);
             mgCtx.clearRect(0, 0, w, h);
-
             const cx = w / 2, cy = h / 2;
             const t = performance.now() * 0.002;
 
-            // Earth
             mgCtx.beginPath(); mgCtx.arc(cx, cy, 15, 0, Math.PI * 2);
             mgCtx.fillStyle = '#05a'; mgCtx.fill();
-            mgCtx.beginPath(); mgCtx.arc(cx, cy, 15, 0.5, Math.PI * 1.5); // shadow side
-            mgCtx.fillStyle = '#000'; mgCtx.fill();
 
-            // Bow Shock (Left side usually, but wind comes from "Sun"?)
-            // Let's assume Sun is Left. Wind flows Left -> Right.
-            // Bow Shock is curved on Left.
-
-            // Wind Particles flow
-            const particles = 40;
-            const speedFact = STATE.speed ? (STATE.speed / 200) : 2; // pixel speed
-
-            for (let i = 0; i < particles; i++) {
-                // Random stream
+            const speedFact = STATE.speed ? (STATE.speed / 200) : 2;
+            for (let i = 0; i < 40; i++) {
                 const y = (Math.sin(i * 132 + t) * h * 0.4) + cy;
-                const xBase = (t * speedFact * 20 + i * 30) % w;
-                // Move Left to Right
-                // Interaction: deflect around earth
-                let x = xBase;
+                let x = (t * speedFact * 20 + i * 30) % w;
+                const dx = x - cx, dy = y - cy, dist = Math.sqrt(dx * dx + dy * dy);
                 let yD = y;
-
-                // Simple deflection logic
-                const dx = x - cx;
-                const dy = y - cy;
-                const dist = Math.sqrt(dx * dx + dy * dy);
-
-                if (dist < 40) {
-                    // Deflect y
-                    yD += (dy > 0 ? 1 : -1) * (40 - dist);
-                    // Slow x?
-                }
-
-                mgCtx.fillStyle = '#aaa';
-                if (STATE.speed > 500) mgCtx.fillStyle = '#fb0';
-
+                if (dist < 40) yD += (dy > 0 ? 1 : -1) * (40 - dist);
+                mgCtx.fillStyle = STATE.speed > 500 ? '#fb0' : '#aaa';
                 mgCtx.fillRect(x, yD, 3, 1);
-            }
-
-            // Field Lines
-            mgCtx.strokeStyle = 'rgba(0,100,255,0.3)';
-            mgCtx.lineWidth = 1;
-            // Draw dipole loops
-            for (let s = -1; s <= 1; s += 2) {
-                for (let r = 20; r < 60; r += 10) {
-                    mgCtx.beginPath();
-                    mgCtx.ellipse(cx, cy, r * 0.5, r, 0, Math.PI / 2, Math.PI * 1.5);
-                    // Wait, dipole is usually top-bottom loops if North is Up.
-                    // Magnetic North Up. Loops go out top, circle round, in bottom.
-                    // Side view.
-                    mgCtx.stroke();
-                }
-            }
-        }
-
-        function drawBackground() {
-            bgCtx.fillStyle = '#020508'; bgCtx.fillRect(0, 0, bgC.width, bgC.height);
-            // Blue Stars
-            bgCtx.fillStyle = 'rgba(0, 150, 255, 0.4)';
-            const t = performance.now() * 0.0001;
-            for (let i = 0; i < 60; i++) {
-                const x = (Math.sin(i * 55 + t) * 0.5 + 0.5) * bgC.width;
-                const y = (Math.cos(i * 12 + t) * 0.5 + 0.5) * bgC.height;
-                bgCtx.fillRect(x, y, 1, 1);
             }
         }
 
         function animLoop() {
-            drawBackground();
+            bgCtx.fillStyle = '#020508'; bgCtx.fillRect(0, 0, bgC.width, bgC.height);
+            const t = performance.now() * 0.0001;
+            for (let i = 0; i < 60; i++) {
+                const x = (Math.sin(i * 55 + t) * 0.5 + 0.5) * bgC.width;
+                const y = (Math.cos(i * 12 + t) * 0.5 + 0.5) * bgC.height;
+                bgCtx.fillStyle = 'rgba(0, 150, 255, 0.4)';
+                bgCtx.fillRect(x, y, 1, 1);
+            }
             drawRadar();
             drawMagneto();
 
             const n = new Date();
-            document.getElementById('clock-overlay').innerText = n.toISOString().split('.')[0] + " Z";
+            const utc = n.toISOString().split('.')[0].replace('T', ' ') + " UTC";
+            const loc = n.toLocaleTimeString('uk-UA');
+            document.getElementById('clock-overlay').innerHTML = `
+                <div style="font-size:8px; color:#588; margin-bottom:2px;">REAL-TIME SYSTEM CLOCK</div>
+                <div style="margin-bottom:2px;">${utc}</div>
+                <div style="color:#fff; font-size:11px;">${loc} (LOCAL)</div>
+            `;
             requestAnimationFrame(animLoop);
         }
 
-        // INIT
         fetchData();
         resize();
         setInterval(fetchData, 60000);
