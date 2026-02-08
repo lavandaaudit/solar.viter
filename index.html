@@ -530,35 +530,36 @@
         // DATA FETCH
         async function fetchData() {
             try {
-                // Fetch Plasma
                 const rp = await fetch(NOAA_PLASMA_7D);
-                const plasmaRaw = await rp.json(); // [time, den, speed, temp]
-
-                // Fetch Mag
+                const plasmaRaw = await rp.json();
                 const rm = await fetch(NOAA_MAG_7D);
-                const magRaw = await rm.json(); // [time, bx, by, bz, bt, lat, long]
+                const magRaw = await rm.json();
 
-                // Parse Plasma (Skip header row 0)
                 const latestP = plasmaRaw[plasmaRaw.length - 1];
                 const latestM = magRaw[magRaw.length - 1];
 
-                STATE.density = parseFloat(latestP[1]);
-                STATE.speed = parseFloat(latestP[2]);
-                STATE.temp = parseFloat(latestP[3]);
-
-                STATE.bz = parseFloat(latestM[3]);
-                STATE.bt = parseFloat(latestM[4]);
+                STATE.density = parseFloat(latestP[1]) || 0;
+                STATE.speed = parseFloat(latestP[2]) || 0;
+                STATE.temp = parseFloat(latestP[3]) || 0;
+                STATE.bz = parseFloat(latestM[3]) || 0;
+                STATE.bt = parseFloat(latestM[4]) || 0;
 
                 const history = [];
                 for (let i = 1; i < plasmaRaw.length; i++) {
                     const row = plasmaRaw[i];
+                    if (!row[0]) continue;
+                    // NOAA format "2026-02-08 07:44:00.000" needs normalization
+                    const timeStr = row[0].replace(' ', 'T') + 'Z';
+                    const time = new Date(timeStr);
+                    if (isNaN(time.getTime())) continue;
+
                     history.push({
-                        time: new Date(row[0] + "Z"),
-                        speed: parseFloat(row[2]),
-                        density: parseFloat(row[1])
+                        time: time,
+                        speed: parseFloat(row[2]) || 0,
+                        density: parseFloat(row[1]) || 0
                     });
                 }
-                STATE.history = history;
+                STATE.history = history.sort((a, b) => a.time - b.time);
 
                 updateHUD();
                 updateInfo();
@@ -566,10 +567,7 @@
                 generateStats();
 
             } catch (e) {
-                console.error(e);
-                if (STATE.history.length === 0) {
-                    STATE.speed = 350; STATE.density = 5; STATE.bz = -2;
-                }
+                console.error("Fetch Error:", e);
             }
         }
 
@@ -701,35 +699,29 @@
                 rdCtx.lineWidth = 1;
                 rdCtx.stroke();
 
-                // TIME SCALE MARKERS (00, 06, 12, 18) - ONLY ON TOP LAYER
+                // TIME SCALE MARKERS (ONLY TOP LAYER)
                 if (d === 0) {
-                    rdCtx.font = 'bold 11px Space Mono';
+                    rdCtx.font = 'bold 12px Space Mono';
                     rdCtx.fillStyle = 'rgba(0, 255, 255, 0.9)';
                     rdCtx.textAlign = 'center';
                     [0, 6, 12, 18].forEach(hr => {
                         const ang = (hr / 24) * Math.PI * 2 + rotOffset;
-                        const tx = cx + Math.cos(ang) * (rx * 1.1);
-                        const ty = layerY + Math.sin(ang) * (ry * 1.1);
+                        const tx = cx + Math.cos(ang) * (rx * 1.15);
+                        const ty = layerY + Math.sin(ang) * (ry * 1.15);
                         rdCtx.fillText(hr.toString().padStart(2, '0') + ":00", tx, ty);
-
-                        // Small tick
-                        rdCtx.beginPath();
-                        rdCtx.moveTo(cx + Math.cos(ang) * rx, layerY + Math.sin(ang) * ry);
-                        rdCtx.lineTo(cx + Math.cos(ang) * (rx * 1.05), layerY + Math.sin(ang) * (ry * 1.05));
-                        rdCtx.strokeStyle = 'rgba(0, 255, 255, 0.3)';
-                        rdCtx.stroke();
                     });
-                    rdCtx.textAlign = 'start'; // reset
+                    rdCtx.textAlign = 'start';
                 }
 
                 if (dayData.length > 0) {
-                    const step = Math.max(1, Math.floor(dayData.length / 100));
+                    const step = (d === 0) ? 1 : Math.max(1, Math.floor(dayData.length / 100));
                     for (let i = 0; i < dayData.length; i += step) {
                         const pt = dayData[i];
                         const time = pt.time;
                         const h = time.getUTCHours() + time.getUTCMinutes() / 60;
                         const ang = (h / 24) * Math.PI * 2 + rotOffset;
                         let baseH = (pt.speed - 250) * 0.12;
+                        if (baseH < 2) baseH = 2;
                         const x = cx + Math.cos(ang) * rx * layerScale;
                         const y = layerY + Math.sin(ang) * ry * layerScale;
 
@@ -742,7 +734,7 @@
                         rdCtx.moveTo(x, y);
                         rdCtx.lineTo(x, y - baseH);
                         rdCtx.strokeStyle = col;
-                        rdCtx.lineWidth = 2;
+                        rdCtx.lineWidth = (d === 0) ? 1.5 : 2;
                         rdCtx.globalAlpha = (d === 0) ? layerAlpha : layerAlpha * 0.4;
                         rdCtx.stroke();
                         rdCtx.globalAlpha = 1;
@@ -764,7 +756,7 @@
 
             rdCtx.fillStyle = shortCol; rdCtx.font = 'bold 10px Space Mono';
             rdCtx.fillText("ЗАРАЗ", bx - 14, by + 18);
-            rdCtx.fillStyle = '#fff'; rdCtx.font = '9px Courier New';
+            rdCtx.fillStyle = '#bef'; rdCtx.font = '9px Courier New';
             rdCtx.fillText(shortStatus, bx - 18, by + 30);
             rdCtx.fillStyle = '#0af';
             rdCtx.fillText(`${STATE.speed.toFixed(0)} км/с`, bx - 21, by + 42);
