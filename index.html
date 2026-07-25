@@ -489,9 +489,10 @@
     <div id="clock-overlay">INIT</div>
 
     <script>
-        const PROXY = 'https://corsproxy.io/?';
-        const NOAA_PLASMA_7D = 'https://services.swpc.noaa.gov/products/solar-wind/plasma-7-day.json';
-        const NOAA_MAG_7D = 'https://services.swpc.noaa.gov/products/solar-wind/mag-7-day.json';
+        // NOAA text endpoints (CORS-friendly, no proxy needed)
+        const NOAA_PLASMA = 'https://services.swpc.noaa.gov/text/ace-swepam.txt';
+        const NOAA_MAG = 'https://services.swpc.noaa.gov/text/ace-magnetometer.txt';
+        const NOAA_KP = 'https://services.swpc.noaa.gov/products/noaa-planetary-k-index-forecast.json';
 
         // STATE
         const STATE = {
@@ -501,6 +502,7 @@
             bz: 0,
             bt: 0,
             history: [], // {time, speed, density}
+            kp: undefined,
             status: 'NORMAL'
         };
 
@@ -512,54 +514,90 @@
         function resize() {
             const r = window.devicePixelRatio || 1;
             bgC.width = window.innerWidth * r; bgC.height = window.innerHeight * r;
+            bgCtx.setTransform(r, 0, 0, r, 0, 0);
 
-            // Layout Logic
             const box = document.querySelector('.radar-box');
             if (box) {
                 rdC.width = box.clientWidth * r; rdC.height = box.clientHeight * r;
+                rdCtx.setTransform(r, 0, 0, r, 0, 0);
             }
             const mBox = document.querySelector('.earth-wind-box');
             if (mBox) {
                 mgC.width = mBox.clientWidth * r; mgC.height = mBox.clientHeight * r;
+                mgCtx.setTransform(r, 0, 0, r, 0, 0);
             }
-
-            bgCtx.scale(r, r); rdCtx.scale(r, r); mgCtx.scale(r, r);
         }
         window.addEventListener('resize', resize);
 
-        // DATA FETCH
+        // DATA FETCH - parse NOAA text format
+        function parseNOAAText(text) {
+            var lines = text.trim().split('\n');
+            var data = [];
+            for (var li = 0; li < lines.length; li++) {
+                var line = lines[li];
+                if (line.charAt(0) === '#' || line.charAt(0) === ':' || !line.trim()) continue;
+                var parts = line.trim().split(/\s+/);
+                if (parts.length >= 10) {
+                    var yr = parseInt(parts[0]);
+                    var mo = parseInt(parts[1]) - 1;
+                    var da = parseInt(parts[2]);
+                    var hhmm = parts[3];
+                    var hh = parseInt(hhmm.substring(0, 2));
+                    var mm = parseInt(hhmm.substring(2, 4));
+                    var s = parseInt(parts[6]);
+                    var time = new Date(Date.UTC(yr, mo, da, hh, mm, 0));
+                    if (s === 0 && !isNaN(time.getTime())) {
+                        var vals = [];
+                        for (var vi = 7; vi < parts.length; vi++) vals.push(Number(parts[vi]));
+                        data.push({ time: time, values: vals });
+                    }
+                }
+            }
+            return data;
+        }
+
         async function fetchData() {
             try {
-                const rp = await fetch(NOAA_PLASMA_7D);
-                const plasmaRaw = await rp.json();
-                const rm = await fetch(NOAA_MAG_7D);
-                const magRaw = await rm.json();
+                var results = await Promise.all([
+                    fetch(NOAA_PLASMA),
+                    fetch(NOAA_MAG),
+                    fetch(NOAA_KP)
+                ]);
 
-                const latestP = plasmaRaw[plasmaRaw.length - 1];
-                const latestM = magRaw[magRaw.length - 1];
+                var plasmaText = await results[0].text();
+                var magText = await results[1].text();
+                var kpJson = await results[2].json();
 
-                STATE.density = parseFloat(latestP[1]) || 0;
-                STATE.speed = parseFloat(latestP[2]) || 0;
-                STATE.temp = parseFloat(latestP[3]) || 0;
-                STATE.bz = parseFloat(latestM[3]) || 0;
-                STATE.bt = parseFloat(latestM[4]) || 0;
+                var plasmaData = parseNOAAText(plasmaText);
+                var magData = parseNOAAText(magText);
 
-                const history = [];
-                for (let i = 1; i < plasmaRaw.length; i++) {
-                    const row = plasmaRaw[i];
-                    if (!row[0]) continue;
-                    // NOAA format "2026-02-08 07:44:00.000" needs normalization
-                    const timeStr = row[0].replace(' ', 'T') + 'Z';
-                    const time = new Date(timeStr);
-                    if (isNaN(time.getTime())) continue;
+                if (plasmaData.length > 0) {
+                    var lp = plasmaData[plasmaData.length - 1];
+                    if (lp.values[0] > -9999) STATE.density = lp.values[0];
+                    if (lp.values[1] > -9999) STATE.speed = lp.values[1];
+                    if (lp.values[2] > -1e4) STATE.temp = lp.values[2];
+                }
 
-                    history.push({
-                        time: time,
-                        speed: parseFloat(row[2]) || 0,
-                        density: parseFloat(row[1]) || 0
+                if (magData.length > 0) {
+                    var lm = magData[magData.length - 1];
+                    if (lm.values[2] > -999) STATE.bz = lm.values[2];
+                    if (lm.values[3] > -999) STATE.bt = lm.values[3];
+                }
+
+                var observedKp = kpJson.filter(function(e) { return e.observed === 'observed'; });
+                if (observedKp.length > 0) {
+                    STATE.kp = observedKp[observedKp.length - 1].kp;
+                }
+
+                STATE.history = [];
+                for (var i = 0; i < plasmaData.length; i++) {
+                    var d = plasmaData[i];
+                    STATE.history.push({
+                        time: d.time,
+                        speed: d.values[1] > -9999 ? d.values[1] : 0,
+                        density: d.values[0] > -9999 ? d.values[0] : 0
                     });
                 }
-                STATE.history = history.sort((a, b) => a.time - b.time);
 
                 updateHUD();
                 updateInfo();
@@ -572,7 +610,7 @@
         }
 
         function updateHUD() {
-            const sEl = document.getElementById('val-speed');
+            var sEl = document.getElementById('val-speed');
             sEl.innerText = STATE.speed.toFixed(0);
 
             if (STATE.speed > 700) sEl.className = 'hud-val wind-ext';
@@ -585,77 +623,90 @@
             document.getElementById('val-bt').innerText = STATE.bt.toFixed(1);
             document.getElementById('val-temp').innerText = (STATE.temp / 1000).toFixed(0) + 'k';
 
-            let score = 0;
-            if (STATE.speed > 400) score += 1;
-            if (STATE.speed > 500) score += 2;
-            if (STATE.speed > 700) score += 3;
-            if (STATE.bz < -5) score += 2;
-            if (STATE.bz < -10) score += 3;
-
-            const estKp = Math.min(9, Math.floor(score + STATE.density / 10));
-            document.getElementById('val-kp').innerText = `~${estKp} (EST)`;
+            if (STATE.kp !== undefined) {
+                document.getElementById('val-kp').innerText = STATE.kp.toFixed(1);
+            } else {
+                var score = 0;
+                if (STATE.speed > 400) score += 1;
+                if (STATE.speed > 500) score += 2;
+                if (STATE.speed > 700) score += 3;
+                if (STATE.bz < -5) score += 2;
+                if (STATE.bz < -10) score += 3;
+                document.getElementById('val-kp').innerText = '~' + Math.min(9, Math.floor(score + STATE.density / 10)) + ' (EST)';
+            }
         }
 
         function updateInfo() {
-            const desc = document.getElementById('status-desc-text');
-            const list = document.getElementById('impact-list');
+            var desc = document.getElementById('status-desc-text');
+            var list = document.getElementById('impact-list');
 
-            let txt = '', impacts = [];
+            var txt = '', impacts = [];
 
             if (STATE.speed > 700 || STATE.bz < -15) {
-                txt = "КРИТИЧНА БУРЯ. СИЛЬНИЙ ВІТЕР.";
-                impacts = ["Ризик для супутників", "Струми в мережах"];
+                txt = "\u041a\u0420\u0418\u0422\u0418\u0427\u041d\u0410 \u0411\u0423\u0420\u042f. \u0421\u0418\u041b\u042c\u041d\u0418\u0419 \u0412\u0406\u0422\u0415\u0420.";
+                impacts = ["\u0420\u0438\u0437\u0438\u043a \u0434\u043b\u044f \u0441\u0443\u043f\u0443\u0442\u043d\u0438\u043a\u0456\u0432", "\u0421\u0442\u0440\u0443\u043c\u0438 \u0432 \u043c\u0435\u0440\u0435\u0436\u0430\u0445"];
                 desc.style.color = '#f04';
             } else if (STATE.speed > 500 || STATE.bz < -5) {
-                txt = "ПІДВИЩЕНА АКТИВНІСТЬ.";
-                impacts = ["Помірні сяйва", "Можливі флуктуації"];
+                txt = "\u041f\u0406\u0414\u0412\u0418\u0429\u0415\u041d\u0410 \u0410\u041a\u0422\u0418\u0412\u041d\u0406\u0421\u0422\u042c.";
+                impacts = ["\u041f\u043e\u043c\u0456\u0440\u043d\u0456 \u0441\u044f\u0439\u0432\u0430", "\u041c\u043e\u0436\u043b\u0438\u0432\u0456 \u0444\u043b\u0443\u043a\u0442\u0443\u0430\u0446\u0456\u0457"];
                 desc.style.color = '#f80';
             } else {
-                txt = "СТАН СТАБІЛЬНИЙ. СПОКІЙ.";
-                impacts = ["Магнітосфера в нормі", "Умови стандартні"];
+                txt = "\u0421\u0422\u0410\u041d \u0421\u0422\u0410\u0411\u0406\u041b\u042c\u041d\u0418\u0419. \u0421\u041f\u041e\u041a\u0406\u0419.";
+                impacts = ["\u041c\u0430\u0433\u043d\u0456\u0442\u043e\u0441\u0444\u0435\u0440\u0430 \u0432 \u043d\u043e\u0440\u043c\u0456", "\u0423\u043c\u043e\u0432\u0438 \u0441\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0456"];
                 desc.style.color = '#0f8';
             }
 
             desc.innerText = txt;
-            list.innerHTML = impacts.map(i => `<li>${i}</li>`).join('');
+            list.innerHTML = impacts.map(function(i) { return '<li>' + i + '</li>'; }).join('');
         }
 
         function generateStats() {
-            const p = document.getElementById('stats-panel');
-            let html = '';
-            const days = {};
+            var p = document.getElementById('stats-panel');
+            var html = '';
+            var days = {};
+            var dayCounts = {};
 
-            STATE.history.forEach(d => {
-                const day = d.time.toISOString().split('T')[0];
-                if (!days[day] || d.speed > days[day]) days[day] = d.speed;
-            });
+            for (var i = 0; i < STATE.history.length; i++) {
+                var d = STATE.history[i];
+                var day = d.time.toISOString().split('T')[0];
+                if (!days[day]) { days[day] = 0; dayCounts[day] = 0; }
+                if (d.speed > days[day]) days[day] = d.speed;
+                dayCounts[day]++;
+            }
 
-            html += '<div class="cat-title"><span>MAX SPEED (7D)</span> <span>KM/S</span></div>';
-            Object.keys(days).sort().reverse().slice(0, 7).forEach(date => {
-                const v = days[date];
-                let c = '#0f8';
-                if (v > 400) c = '#ff0'; if (v > 500) c = '#f80'; if (v > 700) c = '#f04';
+            var sortedDays = Object.keys(days).sort().reverse();
+            var latestDay = sortedDays[0];
+            var latestDayData = latestDay ? STATE.history.filter(function(d) { return d.time.toISOString().split('T')[0] === latestDay; }) : [];
+            var avgSpeed = latestDayData.length > 0
+                ? (latestDayData.reduce(function(s, d) { return s + d.speed; }, 0) / latestDayData.length).toFixed(0)
+                : '---';
 
-                html += `<div class="stat-row">
-                    <span class="stat-date">${date.slice(5)}</span>
-                    <span style="color:${c}; font-weight:bold">${v.toFixed(0)}</span>
-                </div>`;
-            });
+            html += '<div class="cat-title"><span>\u0421\u0422\u0410\u0422\u0418\u0421\u0422\u0418\u041a\u0410 (' + (latestDay ? latestDay.slice(5) : '---') + ')</span> <span>\u0417\u0410 \u0421\u042c\u041e\u0413\u041e\u0414\u041d\u0406</span></div>';
+            html += '<div class="stat-row"><span>\u0421\u0435\u0440\u0435\u0434\u043d\u044f \u0448\u0432\u0438\u0434\u043a\u0456\u0441\u0442\u044c</span><span style="color:#0af;font-weight:bold">' + avgSpeed + ' \u043a\u043c/\u0441</span></div>';
+            html += '<div class="stat-row"><span>\u041c\u0430\u043a\u0441. \u0448\u0432\u0438\u0434\u043a\u0456\u0441\u0442\u044c</span><span style="color:#0f8;font-weight:bold">' + (latestDay ? days[latestDay].toFixed(0) : '---') + ' \u043a\u043c/\u0441</span></div>';
+            html += '<div class="stat-row"><span>\u041f\u043e\u0442\u043e\u0447\u043d\u0430 \u0433\u0443\u0441\u0442\u0438\u043d\u0430</span><span style="color:#dff;font-weight:bold">' + STATE.density.toFixed(1) + ' p/cm\u00b3</span></div>';
+            html += '<div class="stat-row"><span>Bz (IMF)</span><span style="color:' + (STATE.bz < -5 ? '#f04' : '#0f8') + ';font-weight:bold">' + STATE.bz.toFixed(1) + ' nT</span></div>';
+
+            if (sortedDays.length > 1) {
+                html += '<div class="cat-title" style="margin-top:10px"><span>MAX SPEED (\u0406\u0421\u0422\u041e\u0420\u0406\u042f)</span> <span>KM/S</span></div>';
+                for (var si = 1; si < Math.min(7, sortedDays.length); si++) {
+                    var date = sortedDays[si];
+                    var v = days[date];
+                    var c = '#0f8';
+                    if (v > 400) c = '#ff0'; if (v > 500) c = '#f80'; if (v > 700) c = '#f04';
+                    html += '<div class="stat-row"><span class="stat-date">' + date.slice(5) + '</span><span style="color:' + c + ';font-weight:bold">' + v.toFixed(0) + '</span></div>';
+                }
+            }
             p.innerHTML = html;
         }
 
-        let alertState = false;
+        var alertState = false;
         function checkAlerts() {
-            const isStorm = STATE.speed > 600 || STATE.bz < -10;
-            const alertBox = document.getElementById('alert-hub');
+            var isStorm = STATE.speed > 600 || STATE.bz < -10;
+            var alertBox = document.getElementById('alert-hub');
             if (isStorm) {
                 if (!alertState) {
-                    alertBox.innerHTML = `
-                        <div style="background:#f04; color:#fff; padding:10px; border:2px solid #fff; font-weight:bold; box-shadow:0 0 20px #f04;">
-                            ⚠️ ГЕОМАГНІТНИЙ ШТОРМ<br>
-                            SPEED: ${STATE.speed.toFixed(0)} KM/S
-                        </div>
-                    `;
+                    alertBox.innerHTML = '<div style="background:#f04;color:#fff;padding:10px;border:2px solid #fff;font-weight:bold;box-shadow:0 0 20px #f04">\u26a0\ufe0f \u0413\u0415\u041e\u041c\u0410\u0413\u041d\u0406\u0422\u041d\u0418\u0419 \u0428\u0422\u041e\u0420\u041c<br>SPEED: ' + STATE.speed.toFixed(0) + ' KM/S</div>';
                     alertState = true;
                 }
             } else {
@@ -672,26 +723,26 @@
         function drawRadar() {
             if (!STATE.history.length) return;
 
-            const W = rdC.width / (window.devicePixelRatio || 1);
-            const H = rdC.height / (window.devicePixelRatio || 1);
+            var W = rdC.width / (window.devicePixelRatio || 1);
+            var H = rdC.height / (window.devicePixelRatio || 1);
             rdCtx.clearRect(0, 0, W, H);
 
-            const cx = W / 2, cy = H / 2 - 30;
-            const rx = Math.min(W, H) * 0.4;
-            const ry = rx * 0.35;
+            var cx = W / 2, cy = H / 2 - 30;
+            var rx = Math.min(W, H) * 0.4;
+            var ry = rx * 0.35;
 
-            const now = new Date();
-            const currHrs = now.getUTCHours() + now.getUTCMinutes() / 60;
-            const rotOffset = Math.PI / 2 - (currHrs / 24) * Math.PI * 2;
+            var now = new Date();
+            var currHrs = now.getUTCHours() + now.getUTCMinutes() / 60;
+            var rotOffset = Math.PI / 2 - (currHrs / 24) * Math.PI * 2;
 
-            for (let d = 6; d >= 0; d--) {
-                const dayStart = new Date(now.getTime() - (d + 1) * 24 * 60 * 60 * 1000);
-                const dayEnd = new Date(now.getTime() - d * 24 * 60 * 60 * 1000);
-                const dayData = STATE.history.filter(p => p.time >= dayStart && p.time < dayEnd);
+            for (var d = 6; d >= 0; d--) {
+                var dayStart = new Date(now.getTime() - (d + 1) * 24 * 60 * 60 * 1000);
+                var dayEnd = new Date(now.getTime() - d * 24 * 60 * 60 * 1000);
+                var dayData = STATE.history.filter(function(p) { return p.time >= dayStart && p.time < dayEnd; });
 
-                const layerY = cy + (d * 12);
-                const layerScale = 1.0 - (d * 0.04);
-                const layerAlpha = 1.0 - (d * 0.1);
+                var layerY = cy + (d * 12);
+                var layerScale = 1.0 - (d * 0.04);
+                var layerAlpha = 1.0 - (d * 0.1);
 
                 rdCtx.beginPath();
                 rdCtx.ellipse(cx, layerY, rx * layerScale, ry * layerScale, 0, 0, Math.PI * 2);
@@ -699,33 +750,31 @@
                 rdCtx.lineWidth = 1;
                 rdCtx.stroke();
 
-                // TIME SCALE MARKERS (ONLY TOP LAYER)
                 if (d === 0) {
                     rdCtx.font = 'bold 12px Space Mono';
                     rdCtx.fillStyle = 'rgba(0, 255, 255, 0.9)';
                     rdCtx.textAlign = 'center';
-                    [0, 6, 12, 18].forEach(hr => {
-                        const ang = (hr / 24) * Math.PI * 2 + rotOffset;
-                        const tx = cx + Math.cos(ang) * (rx * 1.15);
-                        const ty = layerY + Math.sin(ang) * (ry * 1.15);
-                        rdCtx.fillText(hr.toString().padStart(2, '0') + ":00", tx, ty);
+                    [0, 6, 12, 18].forEach(function(hr) {
+                        var ang = (hr / 24) * Math.PI * 2 + rotOffset;
+                        var tx = cx + Math.cos(ang) * (rx * 1.15);
+                        var ty = layerY + Math.sin(ang) * (ry * 1.15);
+                        rdCtx.fillText((hr < 10 ? '0' : '') + hr + ':00', tx, ty);
                     });
                     rdCtx.textAlign = 'start';
                 }
 
                 if (dayData.length > 0) {
-                    const step = (d === 0) ? 1 : Math.max(1, Math.floor(dayData.length / 100));
-                    for (let i = 0; i < dayData.length; i += step) {
-                        const pt = dayData[i];
-                        const time = pt.time;
-                        const h = time.getUTCHours() + time.getUTCMinutes() / 60;
-                        const ang = (h / 24) * Math.PI * 2 + rotOffset;
-                        let baseH = (pt.speed - 250) * 0.12;
+                    var step = (d === 0) ? 1 : Math.max(1, Math.floor(dayData.length / 100));
+                    for (var i = 0; i < dayData.length; i += step) {
+                        var pt = dayData[i];
+                        var h = pt.time.getUTCHours() + pt.time.getUTCMinutes() / 60;
+                        var ang = (h / 24) * Math.PI * 2 + rotOffset;
+                        var baseH = (pt.speed - 250) * 0.12;
                         if (baseH < 2) baseH = 2;
-                        const x = cx + Math.cos(ang) * rx * layerScale;
-                        const y = layerY + Math.sin(ang) * ry * layerScale;
+                        var x = cx + Math.cos(ang) * rx * layerScale;
+                        var y = layerY + Math.sin(ang) * ry * layerScale;
 
-                        let col = '#0f8';
+                        var col = '#0f8';
                         if (pt.speed > 400) col = '#ff0';
                         if (pt.speed > 550) col = '#f80';
                         if (pt.speed > 700) col = '#f04';
@@ -742,42 +791,40 @@
                 }
             }
 
-            // NOW MARKER (REPOSITIONED TO BOTTOM - ЗАРАЗ В НИЗ)
-            const bx = cx, by = cy + ry;
-            const pulse = 1 + Math.sin(performance.now() * 0.01) * 0.2;
+            var bx = cx, by = cy + ry;
+            var pulse = 1 + Math.sin(performance.now() * 0.01) * 0.2;
             rdCtx.beginPath(); rdCtx.arc(bx, by, 7 * pulse, 0, Math.PI * 2);
             rdCtx.strokeStyle = '#0ff'; rdCtx.lineWidth = 2; rdCtx.stroke();
             rdCtx.beginPath(); rdCtx.arc(bx, by, 2, 0, Math.PI * 2);
             rdCtx.fillStyle = '#fff'; rdCtx.fill();
 
-            // CONCISE REPORT NEAR MARKER
-            let shortStatus = STATE.speed > 600 ? "ШТОРМ" : STATE.speed > 450 ? "АКТИВНО" : "СТАБІЛЬНО";
-            let shortCol = STATE.speed > 600 ? "#f04" : STATE.speed > 450 ? "#f80" : "#0f8";
+            var shortStatus = STATE.speed > 600 ? "\u0428\u0422\u041e\u0420\u041c" : STATE.speed > 450 ? "\u0410\u041a\u0422\u0418\u0412\u041d\u041e" : "\u0421\u0422\u0410\u0411\u0406\u041b\u042c\u041d\u041e";
+            var shortCol = STATE.speed > 600 ? '#f04' : STATE.speed > 450 ? '#f80' : '#0f8';
 
             rdCtx.fillStyle = shortCol; rdCtx.font = 'bold 10px Space Mono';
-            rdCtx.fillText("ЗАРАЗ", bx - 14, by + 18);
+            rdCtx.fillText('\u0417\u0410\u0420\u0410\u0417', bx - 14, by + 18);
             rdCtx.fillStyle = '#bef'; rdCtx.font = '9px Courier New';
             rdCtx.fillText(shortStatus, bx - 18, by + 30);
             rdCtx.fillStyle = '#0af';
-            rdCtx.fillText(`${STATE.speed.toFixed(0)} км/с`, bx - 21, by + 42);
+            rdCtx.fillText(STATE.speed.toFixed(0) + ' \u043a\u043c/\u0441', bx - 21, by + 42);
         }
 
         function drawMagneto() {
-            const w = mgC.width / (window.devicePixelRatio || 1);
-            const h = mgC.height / (window.devicePixelRatio || 1);
+            var w = mgC.width / (window.devicePixelRatio || 1);
+            var h = mgC.height / (window.devicePixelRatio || 1);
             mgCtx.clearRect(0, 0, w, h);
-            const cx = w / 2, cy = h / 2;
-            const t = performance.now() * 0.002;
+            var cx = w / 2, cy = h / 2;
+            var t = performance.now() * 0.002;
 
             mgCtx.beginPath(); mgCtx.arc(cx, cy, 15, 0, Math.PI * 2);
             mgCtx.fillStyle = '#05a'; mgCtx.fill();
 
-            const speedFact = STATE.speed ? (STATE.speed / 200) : 2;
-            for (let i = 0; i < 40; i++) {
-                const y = (Math.sin(i * 132 + t) * h * 0.4) + cy;
-                let x = (t * speedFact * 20 + i * 30) % w;
-                const dx = x - cx, dy = y - cy, dist = Math.sqrt(dx * dx + dy * dy);
-                let yD = y;
+            var speedFact = STATE.speed ? (STATE.speed / 200) : 2;
+            for (var i = 0; i < 40; i++) {
+                var y = (Math.sin(i * 132 + t) * h * 0.4) + cy;
+                var x = (t * speedFact * 20 + i * 30) % w;
+                var dx = x - cx, dy = y - cy, dist = Math.sqrt(dx * dx + dy * dy);
+                var yD = y;
                 if (dist < 40) yD += (dy > 0 ? 1 : -1) * (40 - dist);
                 mgCtx.fillStyle = STATE.speed > 500 ? '#fb0' : '#aaa';
                 mgCtx.fillRect(x, yD, 3, 1);
@@ -786,24 +833,21 @@
 
         function animLoop() {
             bgCtx.fillStyle = '#020508'; bgCtx.fillRect(0, 0, bgC.width, bgC.height);
-            const t = performance.now() * 0.0001;
-            for (let i = 0; i < 60; i++) {
-                const x = (Math.sin(i * 55 + t) * 0.5 + 0.5) * bgC.width;
-                const y = (Math.cos(i * 12 + t) * 0.5 + 0.5) * bgC.height;
+            var t = performance.now() * 0.0001;
+            for (var i = 0; i < 60; i++) {
+                var x = (Math.sin(i * 55 + t) * 0.5 + 0.5) * bgC.width;
+                var y = (Math.cos(i * 12 + t) * 0.5 + 0.5) * bgC.height;
                 bgCtx.fillStyle = 'rgba(0, 150, 255, 0.4)';
                 bgCtx.fillRect(x, y, 1, 1);
             }
             drawRadar();
             drawMagneto();
 
-            const n = new Date();
-            const utc = n.toISOString().split('.')[0].replace('T', ' ') + " UTC";
-            const loc = n.toLocaleTimeString('uk-UA');
-            document.getElementById('clock-overlay').innerHTML = `
-                <div style="font-size:8px; color:#588; margin-bottom:2px;">REAL-TIME SYSTEM CLOCK</div>
-                <div style="margin-bottom:2px;">${utc}</div>
-                <div style="color:#fff; font-size:11px;">${loc} (LOCAL)</div>
-            `;
+            var n = new Date();
+            var utc = n.toISOString().split('.')[0].replace('T', ' ') + ' UTC';
+            var loc = n.toLocaleTimeString('uk-UA');
+            document.getElementById('clock-overlay').innerHTML = '<div style="font-size:8px;color:#588;margin-bottom:2px">REAL-TIME SYSTEM CLOCK</div><div style="margin-bottom:2px">' + utc + '</div><div style="color:#fff;font-size:11px">' + loc + ' (LOCAL)</div>';
+
             requestAnimationFrame(animLoop);
         }
 
@@ -811,8 +855,7 @@
         resize();
         setInterval(fetchData, 60000);
         animLoop();
-
-    </script>
+</script>
 </body>
 
 </html>
