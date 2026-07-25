@@ -489,39 +489,39 @@
     <div id="clock-overlay">INIT</div>
 
     <script>
-        // NOAA text endpoints (CORS-friendly, no proxy needed)
-        const NOAA_PLASMA = 'https://services.swpc.noaa.gov/text/ace-swepam.txt';
-        const NOAA_MAG = 'https://services.swpc.noaa.gov/text/ace-magnetometer.txt';
-        const NOAA_KP = 'https://services.swpc.noaa.gov/products/noaa-planetary-k-index-forecast.json';
+        // NOAA data sources (all CORS-friendly, no proxy needed)
+        // propagated-solar-wind.json: ~7 days, 1-min resolution, speed/density/temp/bz/bt
+        var NOAA_WIND = 'https://services.swpc.noaa.gov/products/geospace/propagated-solar-wind.json';
+        var NOAA_KP = 'https://services.swpc.noaa.gov/products/noaa-planetary-k-index-forecast.json';
 
         // STATE
-        const STATE = {
+        var STATE = {
             speed: 0,
             density: 0,
             temp: 0,
             bz: 0,
             bt: 0,
-            history: [], // {time, speed, density}
+            history: [],
             kp: undefined,
             status: 'NORMAL'
         };
 
         // Canvas
-        const bgC = document.getElementById('bg-layer'); const bgCtx = bgC.getContext('2d');
-        const rdC = document.getElementById('radar-canvas'); const rdCtx = rdC.getContext('2d');
-        const mgC = document.getElementById('magneto-canvas'); const mgCtx = mgC.getContext('2d');
+        var bgC = document.getElementById('bg-layer'); var bgCtx = bgC.getContext('2d');
+        var rdC = document.getElementById('radar-canvas'); var rdCtx = rdC.getContext('2d');
+        var mgC = document.getElementById('magneto-canvas'); var mgCtx = mgC.getContext('2d');
 
         function resize() {
-            const r = window.devicePixelRatio || 1;
+            var r = window.devicePixelRatio || 1;
             bgC.width = window.innerWidth * r; bgC.height = window.innerHeight * r;
             bgCtx.setTransform(r, 0, 0, r, 0, 0);
 
-            const box = document.querySelector('.radar-box');
+            var box = document.querySelector('.radar-box');
             if (box) {
                 rdC.width = box.clientWidth * r; rdC.height = box.clientHeight * r;
                 rdCtx.setTransform(r, 0, 0, r, 0, 0);
             }
-            const mBox = document.querySelector('.earth-wind-box');
+            var mBox = document.querySelector('.earth-wind-box');
             if (mBox) {
                 mgC.width = mBox.clientWidth * r; mgC.height = mBox.clientHeight * r;
                 mgCtx.setTransform(r, 0, 0, r, 0, 0);
@@ -529,74 +529,43 @@
         }
         window.addEventListener('resize', resize);
 
-        // DATA FETCH - parse NOAA text format
-        function parseNOAAText(text) {
-            var lines = text.trim().split('\n');
-            var data = [];
-            for (var li = 0; li < lines.length; li++) {
-                var line = lines[li];
-                if (line.charAt(0) === '#' || line.charAt(0) === ':' || !line.trim()) continue;
-                var parts = line.trim().split(/\s+/);
-                if (parts.length >= 10) {
-                    var yr = parseInt(parts[0]);
-                    var mo = parseInt(parts[1]) - 1;
-                    var da = parseInt(parts[2]);
-                    var hhmm = parts[3];
-                    var hh = parseInt(hhmm.substring(0, 2));
-                    var mm = parseInt(hhmm.substring(2, 4));
-                    var s = parseInt(parts[6]);
-                    var time = new Date(Date.UTC(yr, mo, da, hh, mm, 0));
-                    if (s === 0 && !isNaN(time.getTime())) {
-                        var vals = [];
-                        for (var vi = 7; vi < parts.length; vi++) vals.push(Number(parts[vi]));
-                        data.push({ time: time, values: vals });
-                    }
-                }
-            }
-            return data;
-        }
-
+        // DATA FETCH - parse NOAA propagated solar wind JSON (7 days, 1-min)
         async function fetchData() {
             try {
                 var results = await Promise.all([
-                    fetch(NOAA_PLASMA),
-                    fetch(NOAA_MAG),
+                    fetch(NOAA_WIND),
                     fetch(NOAA_KP)
                 ]);
 
-                var plasmaText = await results[0].text();
-                var magText = await results[1].text();
-                var kpJson = await results[2].json();
+                var windJson = await results[0].json();
+                var kpJson = await results[1].json();
 
-                var plasmaData = parseNOAAText(plasmaText);
-                var magData = parseNOAAText(magText);
+                // Parse propagated solar wind: row[0]=time, [1]=speed, [2]=density, [3]=temp, [6]=bz, [7]=bt
+                if (windJson.length > 1) {
+                    var last = windJson[windJson.length - 1];
+                    STATE.speed = Number(last[1]) || 0;
+                    STATE.density = Number(last[2]) || 0;
+                    STATE.temp = Number(last[3]) || 0;
+                    STATE.bz = Number(last[6]) || 0;
+                    STATE.bt = Number(last[7]) || 0;
 
-                if (plasmaData.length > 0) {
-                    var lp = plasmaData[plasmaData.length - 1];
-                    if (lp.values[0] > -9999) STATE.density = lp.values[0];
-                    if (lp.values[1] > -9999) STATE.speed = lp.values[1];
-                    if (lp.values[2] > -1e4) STATE.temp = lp.values[2];
+                    STATE.history = [];
+                    for (var i = 1; i < windJson.length; i++) {
+                        var row = windJson[i];
+                        var time = new Date(row[0]);
+                        if (isNaN(time.getTime())) continue;
+                        STATE.history.push({
+                            time: time,
+                            speed: Number(row[1]) || 0,
+                            density: Number(row[2]) || 0
+                        });
+                    }
                 }
 
-                if (magData.length > 0) {
-                    var lm = magData[magData.length - 1];
-                    if (lm.values[2] > -999) STATE.bz = lm.values[2];
-                    if (lm.values[3] > -999) STATE.bt = lm.values[3];
-                }
-
+                // Kp index
                 var observedKp = kpJson.filter(function(e) { return e.observed === 'observed'; });
                 if (observedKp.length > 0) {
                     STATE.kp = observedKp[observedKp.length - 1].kp;
-                }
-
-                STATE.history = [];
-                for (var i = 0; i < plasmaData.length; i++) {
-                    var d = plasmaData[i];
-                    STATE.history.push({
-                        time: d.time,
-                        speed: d.values[1] > -9999 ? d.values[1] : 0,
-                        density: d.values[0] > -9999 ? d.values[0] : 0
-                    });
                 }
 
                 updateHUD();
@@ -605,7 +574,7 @@
                 generateStats();
 
             } catch (e) {
-                console.error("Fetch Error:", e);
+                console.error('Fetch Error:', e);
             }
         }
 
@@ -718,7 +687,7 @@
         }
 
         // ------------------------------------
-        // VISUALIZATION - RADAR
+        // VISUALIZATION - RADAR (7 days of data)
         // ------------------------------------
         function drawRadar() {
             if (!STATE.history.length) return;
